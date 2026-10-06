@@ -3860,7 +3860,7 @@ self.addEventListener(&#x27;fetch&#x27;,function(e){
       <div class="tog"><div class="tog-m"><div class="tog-t">静默 (Mute)</div><div class="tog-s">开启后：对话中不注入档案内容，仅当你明确要求记住某事时写入新条目。</div></div><div class="sw2" id="aset-am-mute"></div></div>
       <div class="tog"><div class="tog-m"><div class="tog-t">流式传输（打字机效果）</div><div class="tog-s">逐字显示回复并可中途停止生成。关闭则等完整回复后一次性显示。</div></div><div class="sw2" id="aset-stream"></div></div>
       <div class="tog"><div class="tog-m"><div class="tog-t">启用思考链</div><div class="tog-s">开＝AI 回复前展示可折叠的思路笔记（与电脑端同款：原文完整、只按普通输出计一次费）。Anthropic 系关闭本开关＝改走官方原生思考：界面按官方设计仅显示思考摘要，思考按实际发生的 token 计费；其他服务商关闭即不带思考。可随时开关；切换后下一条消息会重建一次提示缓存，之后恢复稳定命中。</div></div><div class="sw2" id="aset-think"></div></div>
-      <div class="f-group" id="aset-effort-g"><label>思考强度 <span class="lb-note">Anthropic /messages</span></label><div class="seg3" id="aset-effort"><button type="button" data-v="high">High</button><button type="button" data-v="xhigh">XHigh</button><button type="button" data-v="max">Max</button></div><p class="hint" style="margin:6px 0 0">High 为官方默认；XHigh / Max 会提高推理与工具调用投入，也可能增加费用。Fable 5.1 使用 XHigh / Max 时自动给 64k 输出空间。</p></div>
+      <div class="f-group" id="aset-effort-g" style="display:none"><label>思考强度 <span class="lb-note">Anthropic /messages</span></label><div class="seg3" id="aset-effort"><button type="button" data-v="high">High</button><button type="button" data-v="xhigh">XHigh</button><button type="button" data-v="max">Max</button></div><p class="hint" style="margin:6px 0 0">High 为官方默认；XHigh / Max 会提高推理与工具调用投入，也可能增加费用。Fable 5.1 使用 XHigh / Max 时自动给 64k 输出空间。</p></div>
       <div class="tog"><div class="tog-m"><div class="tog-t">支持图片识别（视觉能力）</div><div class="tog-s">开启后图片会编码发送给 API，关闭则仅发文字。默认值按服务商自动设定。</div></div><div class="sw2" id="aset-vision"></div></div>
       <div class="tog"><div class="tog-m"><div class="tog-t">启用联网搜索</div><div class="tog-s">AI 可在对话中检索实时网页信息。不支持的模型会自动跳过。</div></div><div class="sw2" id="aset-web"></div></div>
       <div class="tog"><div class="tog-m"><div class="tog-t">提示缓存（Prompt Caching）</div><div class="tog-s">自动优化缓存命中率以降低输入费用。中转站报 400 错误时可关闭。</div></div><div class="sw2" id="aset-cache"></div></div>
@@ -9062,8 +9062,10 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     _injectAnthropicMsgCacheM(_anthMsgs,cfg);
     const _anthNative=!think&&!!(pa&&pa._anthNative);
     const _anthEffort=['high','xhigh','max'].indexOf(String(cfg.effort||'high').toLowerCase())>=0?String(cfg.effort||'high').toLowerCase():'high';
-    const _anthMaxT=((_anthEffort==='xhigh'||_anthEffort==='max')&&!(pa&&pa._maxTokOverride>0))?Math.max(maxT,64000):maxT;
-    const b={model:model,max_tokens:_anthNative?Math.max(_anthMaxT,8192):_anthMaxT,messages:_anthMsgs,stream:stream,output_config:{effort:_anthEffort}};
+    const _anthEffortChat=!!(pa&&pa._chat);
+    const _anthMaxT=(_anthEffortChat&&(_anthEffort==='xhigh'||_anthEffort==='max')&&!(pa&&pa._maxTokOverride>0))?Math.max(maxT,64000):maxT;
+    const b={model:model,max_tokens:_anthNative?Math.max(_anthMaxT,8192):_anthMaxT,messages:_anthMsgs,stream:stream};
+    if(_anthEffortChat&&!(pa&&pa._noEffort))b.output_config={effort:_anthEffort};
     if(sys){
       if(cfg.promptCache!==false){
         if(_sysTail2&&sys.length>_sysTail2.length+2&&sys.slice(-_sysTail2.length)===_sysTail2){const _hd2=sys.slice(0,sys.length-_sysTail2.length).replace(/\s+$/,'');b.system=[{type:'text',text:_hd2,cache_control:_ccObjM(cfg)},{type:'text',text:_sysTail2,cache_control:_ccObjM(cfg)}]}
@@ -9103,6 +9105,10 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
   if(!res.ok){
     let errTxt=await res.text().catch(()=>'');try{var _il8=window._ibImgDiagLog;if(_il8&&_il8.length&&_il8[_il8.length-1].status===res.status&&!_il8[_il8.length-1].err)_il8[_il8.length-1].err=String(errTxt||'').replace(/\s+/g,' ').slice(0,220)}catch(e){}
     
+    if(fmt==='anthropic'&&res.status===400&&/(output_config|effort)/i.test(errTxt)&&!(pa&&pa._noEffort)){
+      try{toast('这条线路不接受思考强度参数，已退回默认强度重试')}catch(e){}
+      return callAI(cfg,_hist0,_sys0,onDelta,signal,Object.assign({},pa||{},{_noEffort:true}));
+    }
     if(res.status>=400&&res.status<500&&!(pa&&pa._noImg)&&_errImgRejectM(errTxt)&&_histHasImgM(_hist0)){
       if(_errImgSizeM(errTxt)){try{toast('图片体积超过该 API 限制，已改为文字说明重发')}catch(e2){}}else if(_errImgCapRejectM(errTxt)){_visionDeadMarkM(cfg)}else{try{toast('该 API 拒收了本次图片（疑似格式或链路问题），已改为文字说明重发；未记入不支持名单')}catch(e2){}}
       return callAI(cfg,_hist0,_sys0,onDelta,signal,Object.assign({},pa||{},{_noImg:true}));
@@ -11361,6 +11367,7 @@ provSel.addEventListener('change',()=>{
   if(!md.value.trim()||md.value.trim()===prev.model)md.value=nx.model||'';
   sw2($('aset-vision'),!!nx.vision);
   _lastProv=provSel.value;
+  _asetEffortRowM();
 });
 
 function _modelListReq(prov,endpoint,key){
@@ -11536,7 +11543,9 @@ document.addEventListener('click',()=>{const m=$('aset-ava-menu');if(m&&!m.hidde
 $('aset-temp').addEventListener('input',e=>{$('aset-temp-val').textContent=Number(e.target.value).toFixed(1);rangeFill(e.target)});
 function _asetEffortSetM(v){v=['high','xhigh','max'].indexOf(String(v||'').toLowerCase())>=0?String(v).toLowerCase():'high';document.querySelectorAll('#aset-effort button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v)})}
 function _asetEffortGetM(){var b=document.querySelector('#aset-effort button.on');return b&&['high','xhigh','max'].indexOf(b.dataset.v)>=0?b.dataset.v:'high'}
+function _asetEffortRowM(){try{var g=$('aset-effort-g');if(!g)return;var p=provSel.value,ep=String(($('aset-endpoint')&&$('aset-endpoint').value)||'');g.style.display=(p==='anthropic'||(p==='custom'&&/\/messages(?:\?.*)?$/i.test(ep)))?'':'none'}catch(e){}}
 document.querySelectorAll('#aset-effort button').forEach(function(b){b.addEventListener('click',function(){_asetEffortSetM(b.dataset.v)})});
+try{$('aset-endpoint').addEventListener('input',_asetEffortRowM)}catch(e){}
 _asetEffortSetM('high');
 ['aset-stream','aset-think','aset-vision','aset-web','aset-cache','aset-cache1h','aset-fb-on','aset-memw','aset-am','aset-am-mute','aset-ib','aset-ib-post','aset-ib-cmt','aset-ib-img'].forEach(id=>{
   $(id).dataset.wired='1';/* v117-p：#12 保险丝标记 */
@@ -11696,7 +11705,7 @@ function openAset(c){
   $('aset-temp').value=t;$('aset-temp-val').textContent=Number(t).toFixed(1);rangeFill($('aset-temp'));
   sw2($('aset-stream'),c?c.streaming!==false:true);
   sw2($('aset-think'),!!(c&&c.thinkingEnabled));
-  _asetEffortSetM((c&&c.effort)||'high');
+  _asetEffortSetM((c&&c.effort)||'high');_asetEffortRowM();
   sw2($('aset-vision'),c?(c.vision!=null?!!c.vision:!!PROVIDERS[prov].vision):!!PROVIDERS[prov].vision);
   sw2($('aset-web'),!!(c&&c.webSearch));
   sw2($('aset-am'),!!(c&&c.autoMem));
