@@ -9013,6 +9013,10 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
   if(!ep)throw new Error('未填写 Endpoint');
   const useWS=!!cfg.webSearch&&!(pa&&pa._noWS);
   const _hist0=hist,_sys0=sys;
+  /* Fable/新系 adaptive 原生思考：只引导复杂问题审慎核对，不启用假 <thinking>，不要求额外重发。 */
+  if(fmt==='anthropic'&&!think&&pa&&pa._chat&&pa._anthNative&&_anthThinkShape(model).type==='adaptive'){
+    sys='【回答准确性】遇到需要依赖前文事实、日期细节、工具结果、代码或多步判断的问题，请先核对上下文与证据，必要时充分使用原生自适应思考；即使提问很短也不要漏掉隐含前提。无法确认的事实不要臆测，普通闲聊自然回答。\n\n'+String(sys||'');
+  }
   let _sysTail2='';if(typeof sys==='string'&&sys.indexOf(_SYS_SPLIT_M)>=0){const _sp=sys.split(_SYS_SPLIT_M);const _h2=_sp[0].replace(/\s+$/,''),_t2=_sp.slice(1).join('\n\n').replace(/^\s+/,'').replace(/\s+$/,'');_sysTail2=_t2;sys=_h2+(_t2?'\n\n'+_t2:'');try{if(localStorage.getItem('ib_sysSplit')==='0')_sysTail2=''}catch(e){}}/* 保险开关 ib_sysSplit=0：不拆块、整段一个断点（档案位置不变） */
   if(pa&&pa._noImg&&_histHasImgM(hist))hist=_stripHistImgsM(hist);
   
