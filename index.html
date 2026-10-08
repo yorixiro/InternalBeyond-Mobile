@@ -8694,6 +8694,8 @@ function _anthThinkShape(model){
   
   const m=/claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d+))?/i.exec(String(model||''));
   if(m){const maj=+m[1],min=+(m[2]||0);if(maj>=5||(maj===4&&min>=7))return{type:'adaptive',display:'summarized'}}
+  /* 中转可能把 Fable 5.1 命名为 fable5.1，而不是 claude-fable-5-1。 */
+  if(/fable[-_. ]?5(?:[-_. ]?1)?(?:$|[^0-9])/i.test(String(model||'')))return{type:'adaptive',display:'summarized'};
   return{type:'enabled',budget_tokens:4096};
 }
 function extractFull(fmt,j){
@@ -9034,9 +9036,22 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
   }
   
   const _u={i:0,o:0,cr:0,cw:0,seen:false};
-  const _fin={r:''};
+  const _fin={r:'',thinkingBlocks:0,thinkingChars:0,thinkingTokens:null};
   const _grabU=j=>{try{
     if(!j)return;
+    /* 仅记录原生思考事件数量及使用量，不保存或生成思考文本。 */
+    if(fmt==='anthropic'){
+      if(j.type==='content_block_start'&&j.content_block&&j.content_block.type==='thinking'){
+        _fin.thinkingBlocks++;_fin.thinkingChars+=String(j.content_block.thinking||'').length;
+      }
+      if(j.type==='content_block_delta'&&j.delta&&typeof j.delta.thinking==='string')_fin.thinkingChars+=j.delta.thinking.length;
+      if(j.type==='message'&&Array.isArray(j.content)){
+        _fin.thinkingBlocks=j.content.filter(function(x){return x&&x.type==='thinking'}).length;
+        _fin.thinkingChars=j.content.reduce(function(n,x){return n+(x&&x.type==='thinking'?String(x.thinking||'').length:0)},0);
+      }
+      var _tu=(j.usage||(j.message&&j.message.usage)||{});
+      if(_tu.output_tokens_details&&_tu.output_tokens_details.thinking_tokens!=null)_fin.thinkingTokens=+_tu.output_tokens_details.thinking_tokens;
+    }
     try{
       if(j.type==='message_start'&&j.message&&j.message.model)_fin.model=String(j.message.model);
       else if(j.type==='message'&&j.model)_fin.model=String(j.model);
@@ -9116,6 +9131,11 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     let errTxt=await res.text().catch(()=>'');try{var _il8=window._ibImgDiagLog;if(_il8&&_il8.length&&_il8[_il8.length-1].status===res.status&&!_il8[_il8.length-1].err)_il8[_il8.length-1].err=String(errTxt||'').replace(/\s+/g,' ').slice(0,220)}catch(e){}
     
     if(fmt==='anthropic'&&res.status===400&&/(output_config|effort)/i.test(errTxt)&&!(pa&&pa._noEffort)){
+      /* 高强度失败不能静默改成默认强度，防止误以为正在使用 XHigh/Max。 */
+      if((pa&&pa._chat)&&['xhigh','max'].indexOf(String(cfg.effort||'').toLowerCase())>=0){
+        _anthDiagCompleteM(cfg,Object.assign(_fin,{error:'中转拒绝 '+String(cfg.effort).toUpperCase()+'，未降档'}));
+        throw new Error('中转拒绝 '+String(cfg.effort).toUpperCase()+' 思考强度，本次未降低强度重试。请选 High，或使用支持 output_config.effort 的 /messages 线路。');
+      }
       try{toast('这条线路不接受思考强度参数，已退回默认强度重试')}catch(e){}
       return callAI(cfg,_hist0,_sys0,onDelta,signal,Object.assign({},pa||{},{_noEffort:true,_effortFallback:true}));
     }
@@ -9160,6 +9180,11 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     }
     /* v69-m t11：thinking 形参代次误判（新旧系形参互斥）→ 翻面重试一次 */
     if(!res.ok&&fmt==='anthropic'&&res.status===400&&/thinking|adaptive|budget_tokens|display/i.test(errTxt)){
+      /* Fable 5+ 不支持用旧式 enabled/budget_tokens 替代 adaptive；不能用假成功掩盖中转不兼容。 */
+      if(/fable[-_. ]?5(?:[-_. ]?1)?(?:$|[^0-9])/i.test(model)&&/"type":"adaptive"/.test(String(body||''))){
+        _anthDiagCompleteM(cfg,Object.assign(_fin,{error:'中转拒绝 Fable 原生 adaptive 思考，未改用旧协议'}));
+        throw new Error('中转拒绝 Fable 的原生 adaptive thinking 参数。本次未改用旧式思考协议，请检查 /messages 接口。');
+      }
       try{const b5=JSON.parse(body);
         if(b5.thinking){b5.thinking=(b5.thinking.type==='adaptive')?{type:'enabled',budget_tokens:4096}:{type:'adaptive',display:'summarized'};
           body=JSON.stringify(b5);res=await fetch(url,{method:'POST',headers:headers,body:body,signal:signal});}
@@ -9186,6 +9211,7 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     ak=ak.replace(/^\s+/,'');/* v69-m t11 */
     if(_u.seen){try{_tkRecord(cfg,{i:_u.i,cr:_u.cr,cw:_u.cw,o:_u.o})}catch(e){}}
     if(fmt==='anthropic')_anthFbNoteM(_fin);/* v161-p */
+    if(fmt==='anthropic'&&_anthEffortChat)_anthDiagCompleteM(cfg,_fin);
     return{t:at,k:ak,u:_u.seen?{i:_u.i,o:_u.o,cr:_u.cr,cw:_u.cw}:null,fin:_fin.r,fb:_fin.fb||null,model:_fin.model||''};
   }
   const j=await res.json();
@@ -9197,6 +9223,7 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
   full.u=_u.seen?{i:_u.i,o:_u.o,cr:_u.cr,cw:_u.cw}:null;
   full.fin=_fin.r;full.fb=_fin.fb||null;full.model=_fin.model||'';
   if(fmt==='anthropic')_anthFbNoteM(_fin);/* v161-p */
+  if(fmt==='anthropic'&&_anthEffortChat)_anthDiagCompleteM(cfg,_fin);
   onDelta(full.t,full.k);
   return full;
 }
@@ -11556,7 +11583,19 @@ function _asetEffortGetM(){var b=document.querySelector('#aset-effort button.on'
 function _asetEffortRowM(){try{var g=$('aset-effort-g');if(!g)return;var p=provSel.value,ep=String(($('aset-endpoint')&&$('aset-endpoint').value)||'');g.style.display=(p==='anthropic'||(p==='custom'&&/\/messages(?:\?.*)?$/i.test(ep)))?'':'none'}catch(e){}}
 function _anthDiagKeyM(cfg){return 'ib_anth_diag_'+String((cfg&&cfg.id)||'')}
 function _anthDiagWriteM(cfg,d){try{if(!cfg||!cfg.id)return;d=Object.assign({at:Date.now()},d||{});localStorage.setItem(_anthDiagKeyM(cfg),JSON.stringify(d));if(_editCfgId===cfg.id)_anthDiagDrawM(cfg)}catch(e){}}
-function _anthDiagDrawM(cfg){try{var el=$('aset-effort-diag');if(!el)return;if(!cfg||!cfg.id){el.textContent='最近请求：保存这个 API 后开始记录';return}var d=null;try{d=JSON.parse(localStorage.getItem(_anthDiagKeyM(cfg))||'null')}catch(e){}if(!d){el.textContent='最近请求：暂无记录';return}var tm='';try{var z=new Date(d.at);tm=('0'+z.getHours()).slice(-2)+':'+('0'+z.getMinutes()).slice(-2)}catch(e){}var ef=d.fallback?'默认（中转拒绝参数）':(d.effort||'未发送');el.textContent='最近请求'+(tm?' '+tm:'')+'：'+String(d.model||'')+' · effort='+ef+' · '+String(d.thinking||'off')+' · '+String(d.maxTokens||'?')+' · web '+(d.webSearch?'on':'off')}catch(e){}}
+function _anthDiagCompleteM(cfg,fin){try{
+  if(!cfg||!cfg.id)return;
+  var d=JSON.parse(localStorage.getItem(_anthDiagKeyM(cfg))||'null')||{};
+  if(fin.error)d.error=String(fin.error);
+  else{d.received=true;d.nativeBlocks=fin.thinkingBlocks||0;d.nativeChars=fin.thinkingChars||0;d.thinkingTokens=fin.thinkingTokens;d.actualModel=fin.model||'';d.stopReason=fin.r||'';d.fallbackTo=(fin.fb&&fin.fb.to)||''}
+  localStorage.setItem(_anthDiagKeyM(cfg),JSON.stringify(d));
+  if(_editCfgId===cfg.id)_anthDiagDrawM(cfg);
+}catch(e){}}
+function _anthDiagDrawM(cfg){try{var el=$('aset-effort-diag');if(!el)return;if(!cfg||!cfg.id){el.textContent='最近请求：保存这个 API 后开始记录';return}var d=null;try{d=JSON.parse(localStorage.getItem(_anthDiagKeyM(cfg))||'null')}catch(e){}if(!d){el.textContent='最近请求：暂无记录';return}var tm='';try{var z=new Date(d.at);tm=('0'+z.getHours()).slice(-2)+':'+('0'+z.getMinutes()).slice(-2)}catch(e){}var ef=d.fallback?'默认（中转拒绝参数）':(d.effort||'未发送');var nativeInfo=d.error?(' · 异常：'+d.error):(d.received&&d.thinking==='adaptive'?(d.nativeBlocks>0?(d.nativeChars>0?' · 原生思考摘要已返回':' · 有原生思考块，摘要为空'):(d.thinkingTokens>0?' · 有推理 token，思考块未返回':' · 本轮没有原生思考块')):'');
+var tokInfo=d.thinkingTokens!=null?(' · 思考 tokens='+d.thinkingTokens):'';
+var modelInfo=d.actualModel&&d.actualModel!==d.model?(' · 实际模型='+d.actualModel):'';
+var stopInfo=d.stopReason==='max_tokens'?' · 达到输出上限':'';
+el.textContent='最近请求'+(tm?' '+tm:'')+'：'+String(d.model||'')+' · effort='+ef+' · '+String(d.thinking||'off')+' · '+String(d.maxTokens||'?')+' · web '+(d.webSearch?'on':'off')+nativeInfo+tokInfo+modelInfo+stopInfo}catch(e){}}
 document.querySelectorAll('#aset-effort button').forEach(function(b){b.addEventListener('click',function(){_asetEffortSetM(b.dataset.v)})});
 try{$('aset-endpoint').addEventListener('input',_asetEffortRowM)}catch(e){}
 _asetEffortSetM('high');
