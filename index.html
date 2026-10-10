@@ -9090,8 +9090,10 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     _injectAnthropicMsgCacheM(_anthMsgs,cfg);
     const _anthNative=!think&&!!(pa&&pa._anthNative);
     const _anthEffort=['high','xhigh','max'].indexOf(String(cfg.effort||'high').toLowerCase())>=0?String(cfg.effort||'high').toLowerCase():'high';
-    const _anthEffortChat=!!(pa&&pa._chat),_anthUseEffort=_anthEffortChat&&!(pa&&pa._noEffort);
-    const _anthMaxT=(_anthUseEffort&&(_anthEffort==='xhigh'||_anthEffort==='max')&&!(pa&&pa._maxTokOverride>0))?Math.max(maxT,64000):maxT;
+    /* High 是默认档，不必额外发送可能被中转拒绝的 output_config；只有 XHigh/Max 显式下发。 */
+    const _anthEffortChat=!!(pa&&pa._chat),_anthUseEffort=_anthEffortChat&&_anthEffort!=='high'&&!(pa&&pa._noEffort);
+    /* 思考强度≠输出长度：不强制扩到 64k，以免中转按最大输出额预扣；尊重用户输出上限。 */
+    const _anthMaxT=maxT;
     const b={model:model,max_tokens:_anthNative?Math.max(_anthMaxT,8192):_anthMaxT,messages:_anthMsgs,stream:stream};
     if(_anthUseEffort)b.output_config={effort:_anthEffort};
     if(sys){
@@ -9174,7 +9176,8 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     if(!res.ok&&(res.status===400||res.status===413||res.status===422||res.status===403)){
       const _t2m=(function(s9){s9=res.bodyUsed?errTxt:s9;try{return String(s9||'').replace(/\\u([0-9a-fA-F]{4})/g,function(_,h){return String.fromCharCode(parseInt(h,16))})}catch(e){return String(s9||'')}})(res.bodyUsed?errTxt:await res.text().catch(()=>errTxt));/* v263-p：报错原文里的 \uXXXX 先还原成汉字，否则中文报错（输出上限 / 额度不足）一个都匹配不上 */
       const _tries=(pa&&pa._maxTokTries)||0;
-      if(_tries<3&&maxT>1024&&(_errLooksMaxTokM(_t2m)||(res.status===403&&/预扣|额度|余额|quota|balance|insufficient/i.test(_t2m)))&&!_errWantsCompletionParamM(_t2m)){
+      /* 费用/余额/403 错误不自动重发；仅对明确的输出上限参数错误有限降档。 */
+       if(_tries<2&&res.status!==403&&maxT>1024&&_errLooksMaxTokM(_t2m)&&!/预扣|额度|余额|quota|balance|insufficient|billing|credit/i.test(_t2m)&&!_errWantsCompletionParamM(_t2m)){
         const _sug=_extractSuggestedMaxTokM(_t2m);
         const _nb=(_sug&&_sug<maxT)?_sug:Math.max(1024,Math.floor(maxT/2));
         var _memK='';try{var _manK=parseInt(_out&&_out.maxTokens)||0;_memK=_maxTokKeyM(cfg,_manK);console.info('[IB] 输出上限 '+maxT+' 被拒，按服务端口径改为 '+_nb+' 重试（通过后本会话内该模型直接采用）')}catch(e){}
