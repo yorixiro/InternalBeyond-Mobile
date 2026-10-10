@@ -9218,7 +9218,7 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     ak=ak.replace(/^\s+/,'');/* v69-m t11 */
     if(_u.seen){try{_tkRecord(cfg,{i:_u.i,cr:_u.cr,cw:_u.cw,o:_u.o})}catch(e){}}
     if(fmt==='anthropic')_anthFbNoteM(_fin);/* v161-p */
-    if(fmt==='anthropic'&&_anthEffortChat)_anthDiagCompleteM(cfg,_fin);
+    if(fmt==='anthropic'&&pa&&pa._chat)_anthDiagCompleteM(cfg,_fin);
     return{t:at,k:ak,u:_u.seen?{i:_u.i,o:_u.o,cr:_u.cr,cw:_u.cw}:null,fin:_fin.r,fb:_fin.fb||null,model:_fin.model||''};
   }
   const j=await res.json();
@@ -9230,7 +9230,7 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
   full.u=_u.seen?{i:_u.i,o:_u.o,cr:_u.cr,cw:_u.cw}:null;
   full.fin=_fin.r;full.fb=_fin.fb||null;full.model=_fin.model||'';
   if(fmt==='anthropic')_anthFbNoteM(_fin);/* v161-p */
-  if(fmt==='anthropic'&&_anthEffortChat)_anthDiagCompleteM(cfg,_fin);
+  if(fmt==='anthropic'&&pa&&pa._chat)_anthDiagCompleteM(cfg,_fin);
   onDelta(full.t,full.k);
   return full;
 }
